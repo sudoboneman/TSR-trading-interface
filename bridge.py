@@ -1,79 +1,100 @@
 import os
 import discord
-from discord.ext import commands
 from flask import Flask, request, jsonify
 import threading
+import asyncio
 from datetime import datetime
 
-# Config
+# --- CONFIGURATION ---
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID"))
+# Ensure we convert the channel ID to an integer securely
+try:
+    CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID", 0))
+except ValueError:
+    CHANNEL_ID = 0
 
+# --- INITIALIZE APPS ---
 app = Flask(__name__)
-# Using Intents.default() as per your original file
-bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
+bot = discord.Client(intents=discord.Intents.default())
 
+# --- FLASK WEB ROUTES ---
 @app.route('/')
 def index():
-    """Root endpoint for Render health checks."""
-    return "TSR Discord Bridge is Online. Waiting for signals from Hugging Face.", 200
+    return "TSR Discord Bridge is Online.", 200
 
 @app.route('/webhook', methods=['POST'])
-def trade_notification():
-    """Hugging Face calls this endpoint for trades and startup probes."""
+def webhook():
     data = request.json
-    # We use create_task to ensure the bot handles the message without blocking Flask
-    bot.loop.create_task(post_trade_embed(data))
-    return jsonify({"status": "received"}), 200
+    
+    # Check if the bot is actually connected before trying to send
+    if not bot.is_ready():
+        print("⚠️ Webhook received, but Discord Bot is not ready yet.")
+        return jsonify({"error": "bot_offline"}), 503
 
-async def post_trade_embed(data):
+    # CRITICAL FIX: Thread-safe cross-communication
+    # This safely pushes the task from the Flask thread into the Discord thread
+    asyncio.run_coroutine_threadsafe(send_discord_alert(data), bot.loop)
+    
+    return jsonify({"status": "queued"}), 200
+
+
+# --- DISCORD ASYNC LOGIC ---
+async def send_discord_alert(data):
+    """Handles the actual sending of the message to Discord."""
     channel = bot.get_channel(CHANNEL_ID)
+    
     if not channel:
-        print(f"❌ Error: Could not find channel ID {CHANNEL_ID}")
+        print(f"❌ CRITICAL ERROR: Bot cannot resolve channel ID {CHANNEL_ID}")
         return
 
-    ticker = data.get("ticker")
-    action = data.get("action")
+    ticker = data.get("ticker", "UNKNOWN")
+    action = data.get("action", "UNKNOWN")
+    amount = data.get("amount", 0)
 
-    # --- STARTUP PROBE LOGIC ---
-    if action == "STARTUP" and ticker == "SYSTEM":
-        embed = discord.Embed(
-            title="🚀 TSR Engine Online",
-            description="The Hugging Face 'Brain' has successfully logged in and the market scanner is now active.",
-            color=discord.Color.blue()
-        )
-        embed.set_footer(text=f"Startup Timestamp: {datetime.now().strftime('%H:%M:%S')}")
-        await channel.send(embed=embed)
-        return
+    try:
+        # 1. Startup Probe Logic
+        if action == "STARTUP" and ticker == "SYSTEM":
+            embed = discord.Embed(
+                title="🚀 TSR Engine Online",
+                description="The Hugging Face 'Brain' has successfully logged in and is scanning.",
+                color=discord.Color.blue()
+            )
+            embed.set_footer(text=f"Boot sequence completed at {datetime.now().strftime('%H:%M:%S')}")
+            await channel.send(embed=embed)
+            print("✅ Startup notification delivered.")
+            
+        # 2. Standard Trade Alert Logic
+        else:
+            color = discord.Color.green() if action == "BUY" else discord.Color.red()
+            embed = discord.Embed(title=f"🚨 TRADE EXECUTED: {ticker}", color=color)
+            embed.add_field(name="Action", value=action, inline=True)
+            embed.add_field(name="Amount", value=str(amount), inline=True)
+            
+            if 'price' in data:
+                embed.add_field(name="Price", value=f"{data['price']} TSR", inline=True)
+                
+            await channel.send(embed=embed)
+            print(f"✅ Trade alert for {ticker} delivered.")
+            
+    except Exception as e:
+        print(f"❌ Discord API Delivery Error: {e}")
 
-    # --- STANDARD TRADE LOGIC ---
-    color = discord.Color.green() if action == "BUY" else discord.Color.red()
-    embed = discord.Embed(title=f"🚨 TRADE EXECUTED: {ticker}", color=color)
-    embed.add_field(name="Action", value=action, inline=True)
-    embed.add_field(name="Amount", value=data.get('amount', 0), inline=True)
-    embed.add_field(name="Price", value=f"{data.get('price', 0)} TSR", inline=True)
-    await channel.send(embed=embed)
 
+# --- STARTUP SEQUENCE ---
 @bot.event
 async def on_ready():
-    try:
-        await bot.tree.sync()
-        print(f"✅ Render Discord Bridge Online: {bot.user}")
-    except Exception as e:
-        print(f"⚠️ Slash Command Sync Warning: {e}")
+    print(f"✅ Discord Bot Connected as {bot.user}")
 
-def run_discord_bot():
-    """Starts the bot in a dedicated thread to keep Flask responsive."""
-    try:
-        bot.run(TOKEN)
-    except Exception as e:
-        print(f"❌ Discord Connection Error: {e}")
-
-# --- STARTUP LOGIC ---
-if not any(thread.name == "DiscordBotThread" for thread in threading.enumerate()):
-    print("🛰️ Initializing Discord Bot Thread...")
-    threading.Thread(target=run_discord_bot, name="DiscordBotThread", daemon=True).start()
+def run_flask():
+    """Runs the Flask server, binding to Render's required port 8080."""
+    # Debug is False to prevent Flask from spawning duplicate workers
+    app.run(host='0.0.0.0', port=8080, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
-    # Render typically uses Gunicorn, but this is kept for your local debugging
-    app.run(host='0.0.0.0', port=8080)
+    # 1. Start Flask in a background thread
+    print("🛰️ Booting Flask Web Server thread...")
+    threading.Thread(target=run_flask, daemon=True).start()
+    
+    # 2. Start Discord in the Main Thread (This blocks the script and keeps it alive)
+    print("🛰️ Booting Discord connection...")
+    bot.run(TOKEN)
