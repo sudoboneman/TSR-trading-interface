@@ -65,16 +65,18 @@ async def send_discord_alert(data):
             
         # 2. Hourly Heartbeat Logic (RESTORED)
         elif action == "HEARTBEAT" and ticker == "SYSTEM":
-            cash = data.get("cash", "Unknown")
-            uptime = data.get("uptime", "Unknown")
+            # We MAP the mismatched labels here:
+            cash_value = data.get("amount", "0")   # 'amount' actually holds our cash
+            uptime_str = data.get("price", "0h 0m") # 'price' actually holds our uptime string
             
             embed = discord.Embed(title="💓 Agent Status Report", color=discord.Color.blue())
             embed.description = "The market scanner is online and actively monitoring."
-            embed.add_field(name="Uptime", value=str(uptime), inline=True)
-            embed.add_field(name="Available Cash", value=f"{cash} TSR", inline=True)
+            
+            # Use str() to ensure the uptime string doesn't break the embed
+            embed.add_field(name="Uptime", value=str(uptime_str), inline=True)
+            embed.add_field(name="Available Cash", value=f"{cash_value} TSR", inline=True)
             
             await channel.send(embed=embed)
-            print("Heartbeat notification delivered.")
             
         # 3. Standard Trade Alert Logic
         else:
