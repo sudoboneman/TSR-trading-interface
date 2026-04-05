@@ -55,7 +55,7 @@ async def send_discord_alert(data):
         # 1. Startup Probe Logic
         if action == "STARTUP" and ticker == "SYSTEM":
             embed = discord.Embed(
-                title="✅ Market Online",
+                title="📡 Market Online",
                 description="The AGENT has successfully logged in and is scanning.",
                 color=discord.Color.blue()
             )
