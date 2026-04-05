@@ -2,14 +2,19 @@ import os
 import discord
 from discord.ext import commands
 from flask import Flask, request, jsonify
-from threading import Thread
+import threading
 
 # Config
 TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("ALERT_CHANNEL_ID"))
 
-app = Flask('')
+app = Flask(__name__)
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
+
+@app.route('/')
+def index():
+    """Root endpoint for Render health checks."""
+    return "TSR Discord Bridge is Online. Waiting for signals from Hugging Face.", 200
 
 @app.route('/webhook', methods=['POST'])
 def trade_notification():
@@ -28,19 +33,24 @@ async def post_trade_embed(data):
         embed.add_field(name="Price", value=f"{data['price']} TSR", inline=True)
         await channel.send(embed=embed)
 
-@bot.tree.command(name="status", description="Check if the bridge is receiving signals")
-async def status(interaction: discord.Interaction):
-    await interaction.response.send_message("✅ Discord Bridge is online on Render.")
-
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    print(f"Logged in as {bot.user} (Render Bridge)")
+    print(f"✅ Render Discord Bridge Online: {bot.user}")
 
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+def run_discord_bot():
+    """Starts the bot.run() in a dedicated thread."""
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        print(f"❌ Discord Connection Error: {e}")
+
+# --- STARTUP LOGIC ---
+# This ensures the bot starts only once when Gunicorn loads the app
+if not any(thread.name == "DiscordBotThread" for thread in threading.enumerate()):
+    print("🛰️ Initializing Discord Bot Thread...")
+    threading.Thread(target=run_discord_bot, name="DiscordBotThread", daemon=True).start()
 
 if __name__ == "__main__":
-    Thread(target=run_flask).start()
-    bot.run(TOKEN)
+    # For local debugging
+    app.run(host='0.0.0.0', port=8080)
