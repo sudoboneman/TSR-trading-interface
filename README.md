@@ -46,7 +46,3 @@ Start with:
 ```
 python bridge.py
 ```
-
-## License
-
-Proprietary — see the repository root for details.
