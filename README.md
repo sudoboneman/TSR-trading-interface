@@ -35,14 +35,28 @@ All alerts use the same endpoint: `POST /webhook`
 
 ## Deployment
 
-Designed for [Render](https://render.com). Set the following environment variables:
+Designed for [Render](https://render.com) Web Service.
+
+### Required environment variables
+
+| Variable | Description |
+|---|---|
+| `DISCORD_TOKEN` | Discord bot token |
+| `ALERT_CHANNEL_ID` | Discord channel ID to post alerts to |
+
+### Render setup
+
+- **Start command**: `python bridge.py`
+- **Port**: 8080 (hardcoded in bridge.py, Render auto-maps $PORT)
+- **Health check**: `GET /` returns 200 when running
+
+The Flask server runs in a background thread while the Discord client occupies the main thread. Gunicorn is included in requirements.txt as a fallback but the service is designed to run standalone via `python bridge.py`.
+
+### Local testing
 
 ```
-DISCORD_TOKEN=<discord bot token>
-ALERT_CHANNEL_ID=<discord channel ID>
-```
-
-Start with:
-```
+pip install -r requirements.txt
+export DISCORD_TOKEN=your_token
+export ALERT_CHANNEL_ID=your_channel_id
 python bridge.py
 ```
